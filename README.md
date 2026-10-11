@@ -67,7 +67,7 @@ The GitHub Developer Analytics Dashboard is built with Flask and the GitHub REST
 
 6. Start the Flask application:
 
-   ```bash
+   ```bash  
    python app.py
    ```
 
@@ -115,3 +115,6 @@ GitHubDeveloperAnalytics/
 ## License
 
 A license has not yet been selected for this project.
+
+# GitHubDeveloperAnalytics
+A Flask web dashboard that analyzes GitHub profiles, repositories, programming languages, stars, and forks.79263d57a005a285c0d1321d632beda0ba958f02
