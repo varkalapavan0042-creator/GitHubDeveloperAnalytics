@@ -1,0 +1,161 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Developer Analytics</title>
+
+    <link rel="stylesheet"
+          href="{{ url_for('static', filename='style.css') }}">
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="{{ url_for('static', filename='js/script.js') }}" defer></script>
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="/">
+            <span class="brand-icon">GH</span>
+            <span>Dev<span class="accent">Analytics</span></span>
+        </a>
+        <span class="live-label"><span class="live-dot"></span> GitHub API</span>
+    </header>
+
+    <main class="container">
+        <section class="hero">
+            <div class="eyebrow">DEVELOPER INSIGHTS</div>
+            <h1>Understand your <span>GitHub journey.</span></h1>
+            <p class="hero-text">
+                Explore developer profiles, repository activity,
+                programming languages, stars and forks.
+            </p>
+
+            <form id="searchForm" class="search">
+                <span class="search-icon">⌕</span>
+                <input
+                    type="text"
+                    id="usernameInput"
+                    placeholder="Enter a GitHub username..."
+                    autocomplete="off"
+                    aria-label="GitHub username"
+                    required
+                >
+                <button id="analyzeBtn" type="submit">Analyze profile ↗</button>
+            </form>
+            <p class="search-hint">Enter any public GitHub username to get started.</p>
+        </section>
+
+        <div id="statusMessage" class="status" role="status" aria-live="polite" hidden></div>
+
+        <section id="dashboard" hidden>
+            <section class="profile-panel panel">
+                <img id="avatar" class="avatar" src="" alt="GitHub profile avatar">
+                <div class="profile-info">
+                    <div class="profile-kicker">DEVELOPER PROFILE</div>
+                    <h2 id="profileName">Developer</h2>
+                    <a id="profileUsername" href="#" target="_blank" rel="noopener noreferrer"></a>
+                    <p id="profileBio" class="profile-bio"></p>
+                </div>
+                <a id="profileLink" class="outline-button"
+                   href="#" target="_blank" rel="noopener noreferrer">
+                    View GitHub ↗
+                </a>
+            </section>
+
+            <section class="stats-grid">
+                <article class="stat-card panel">
+                    <span class="stat-icon blue">▤</span>
+                    <p>Public repositories</p>
+                    <h3 id="publicRepos">0</h3>
+                </article>
+                <article class="stat-card panel">
+                    <span class="stat-icon purple">✦</span>
+                    <p>Total stars</p>
+                    <h3 id="totalStars">0</h3>
+                </article>
+                <article class="stat-card panel">
+                    <span class="stat-icon cyan">⑂</span>
+                    <p>Total forks</p>
+                    <h3 id="totalForks">0</h3>
+                </article>
+                <article class="stat-card panel">
+                    <span class="stat-icon green">◎</span>
+                    <p>Followers</p>
+                    <h3 id="followers">0</h3>
+                </article>
+            </section>
+
+            <section class="charts-grid">
+                <article class="panel chart-panel">
+                    <div class="section-heading">
+                        <div>
+                            <span class="section-kicker">CODE BREAKDOWN</span>
+                            <h2>Programming languages</h2>
+                        </div>
+                    </div>
+                    <div id="chartEmpty" class="chart-empty" hidden>
+                        No language data available for these repositories.
+                    </div>
+                    <div class="chart-wrap">
+                        <canvas id="languageChart"></canvas>
+                    </div>
+                    <div id="languageLegend" class="language-legend"></div>
+                </article>
+
+                <article class="panel chart-panel">
+                    <div class="section-heading">
+                        <div>
+                            <span class="section-kicker">COMMUNITY</span>
+                            <h2>Profile overview</h2>
+                        </div>
+                    </div>
+                    <div class="overview-list">
+                        <div class="overview-row">
+                            <span>Following</span>
+                            <strong id="following">0</strong>
+                        </div>
+                        <div class="overview-row">
+                            <span>Repository count</span>
+                            <strong id="repoCount">0</strong>
+                        </div>
+                        <div class="overview-row">
+                            <span>Total repository size</span>
+                            <strong id="totalSize">0 KB</strong>
+                        </div>
+                        <div class="overview-row">
+                            <span>Languages used</span>
+                            <strong id="languageCount">0</strong>
+                        </div>
+                    </div>
+                    <p class="overview-note">
+                        Language counts are based on each repository's primary
+                        language reported by GitHub.
+                    </p>
+                </article>
+            </section>
+
+            <section class="repositories-section">
+                <div class="section-heading repositories-heading">
+                    <div>
+                        <span class="section-kicker">YOUR CODE</span>
+                        <h2>Repositories</h2>
+                    </div>
+                    <span id="repoBadge" class="count-badge">0 repositories</span>
+                </div>
+                <div id="repositories" class="repository-grid"></div>
+            </section>
+        </section>
+
+        <section id="welcome" class="welcome-panel panel">
+            <div class="welcome-icon">⌘</div>
+            <h2>Your developer story starts here.</h2>
+            <p>Search for a GitHub username to explore profile statistics and repositories.</p>
+        </section>
+    </main>
+
+    <footer>
+        <p>Built with Flask and the GitHub REST API</p>
+        <span>Developer Analytics Dashboard</span>
+    </footer>
+</body>
+</html>
