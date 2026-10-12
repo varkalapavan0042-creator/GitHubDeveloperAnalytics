@@ -1,29 +1,121 @@
-
 import os
-from flask import Flask, jsonify, render_template
+import time
+import secrets
+import hashlib
+import sqlite3
+from urllib.parse import urlparse
+
 import requests
+from dotenv import load_dotenv
+from flask import Flask, jsonify, render_template, request, redirect, url_for, flash
+from flask_login import (
+    LoginManager, UserMixin, login_user, logout_user,
+    login_required, current_user
+)
+from flask_mail import Mail, Message
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_wtf.csrf import CSRFProtect
+from werkzeug.security import generate_password_hash, check_password_hash
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 app = Flask(
     __name__,
     template_folder=os.path.join(BASE_DIR, "templates"),
     static_folder=os.path.join(BASE_DIR, "static"),
-    static_url_path="/static"
+    static_url_path="/static",
 )
 
-@app.route("/check-static")
-def check_static():
-    css_path = os.path.join(BASE_DIR, "static", "style.css")
-    return {
-        "app_file": __file__,
-        "static_folder": app.static_folder,
-        "css_path": css_path,
-        "css_exists": os.path.isfile(css_path)
-    }
+# Set SECRET_KEY in .env. Do not use a hard-coded fallback for deployment.
+secret_key = os.getenv("SECRET_KEY")
+if not secret_key:
+    raise RuntimeError("SECRET_KEY is missing. Add it to your .env file.")
+app.config["SECRET_KEY"] = secret_key
+app.config["PUBLIC_BASE_URL"] = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:5000").rstrip("/")
+app.config["MAIL_SERVER"] = os.getenv("MAIL_SERVER", "smtp.gmail.com")
+app.config["MAIL_PORT"] = int(os.getenv("MAIL_PORT", "587"))
+app.config["MAIL_USE_TLS"] = os.getenv("MAIL_USE_TLS", "True").lower() in ("1", "true", "yes")
+app.config["MAIL_USERNAME"] = os.getenv("MAIL_USERNAME", "")
+app.config["MAIL_PASSWORD"] = os.getenv("MAIL_PASSWORD", "")
+app.config["MAIL_DEFAULT_SENDER"] = os.getenv("MAIL_DEFAULT_SENDER", app.config["MAIL_USERNAME"])
 
+# Secure session-cookie flags are enabled when the public site uses HTTPS.
+if app.config["PUBLIC_BASE_URL"].startswith("https://"):
+    app.config.update(
+        SESSION_COOKIE_SECURE=True,
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+    )
+else:
+    app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
 
+mail = Mail(app)
+csrf = CSRFProtect(app)
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    storage_uri=os.getenv("RATELIMIT_STORAGE_URI", "memory://"),
+)
+
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = "login"
+
+DATABASE = os.path.join(BASE_DIR, "users.db")
 GITHUB_API = "https://api.github.com"
+RESET_TOKEN_SECONDS = 15 * 60
+
+
+def get_db():
+    connection = sqlite3.connect(DATABASE, timeout=10)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    return connection
+
+
+def init_db():
+    with get_db() as db:
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL
+            )
+        """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                expires_at INTEGER NOT NULL,
+                used_at INTEGER,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """)
+        db.execute("CREATE INDEX IF NOT EXISTS idx_reset_token_hash ON password_reset_tokens(token_hash)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_reset_user_id ON password_reset_tokens(user_id)")
+
+
+class User(UserMixin):
+    def __init__(self, user_id, name, email):
+        self.id = str(user_id)
+        self.name = name
+        self.email = email
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    with get_db() as db:
+        row = db.execute(
+            "SELECT id, name, email FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+    if row is None:
+        return None
+    return User(row["id"], row["name"], row["email"])
 
 
 def github_get(path, params=None):
@@ -33,38 +125,112 @@ def github_get(path, params=None):
             f"{GITHUB_API}/{path}",
             params=params,
             headers={"Accept": "application/vnd.github+json"},
-            timeout=15
+            timeout=15,
         )
         return response, None
     except requests.RequestException:
         return None, "Could not connect to GitHub. Check your internet connection."
 
 
+def hash_reset_token(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def get_valid_reset_record(token):
+    if not token or len(token) > 200:
+        return None
+    with get_db() as db:
+        return db.execute(
+            """SELECT id, user_id, expires_at FROM password_reset_tokens
+               WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?""",
+            (hash_reset_token(token), int(time.time())),
+        ).fetchone()
+
+
+def send_reset_email(email, reset_url):
+    print("Sending reset email to:", email)
+    print("SMTP server:", app.config["MAIL_SERVER"])
+    print("SMTP port:", app.config["MAIL_PORT"])
+    print("SMTP username configured:", bool(app.config["MAIL_USERNAME"]))
+    print("SMTP password configured:", bool(app.config["MAIL_PASSWORD"]))
+
+    message = Message(
+        subject="Reset your GitHub Developer Analytics password",
+        recipients=[email],
+        body=(
+            "You requested a password reset.\n\n"
+            f"Click this link within 15 minutes:\n{reset_url}\n\n"
+            "If you did not request this, ignore this email."
+        ),
+    )
+
+    mail.send(message)
+    print("RESET EMAIL SENT SUCCESSFULLY")
+
+
+init_db()
+
+
 @app.route("/")
 def home():
-    return render_template("index.html")
+    if current_user.is_authenticated:
+        return render_template("index.html")
+    return redirect(url_for("welcome"))
+
+
+@app.route("/welcome")
+def welcome():
+    if current_user.is_authenticated:
+        return redirect(url_for("home"))
+    return render_template("welcome.html")
+
+
+@app.route("/check-static")
+def check_static():
+    css_path = os.path.join(BASE_DIR, "static", "style.css")
+    return {
+        "app_file": os.path.abspath(__file__),
+        "static_folder": app.static_folder,
+        "css_path": css_path,
+        "css_exists": os.path.isfile(css_path),
+        "javascript_exists": os.path.isfile(os.path.join(app.static_folder, "js", "script.js")),
+    }
+
+
+@app.route("/api/github-search")
+def github_user_search():
+    query = request.args.get("q", "").strip()
+    if len(query) < 3:
+        return jsonify({"users": []})
+
+    response, error = github_get("search/users", {"q": f"{query} in:login", "per_page": 7})
+    if error:
+        return jsonify({"error": error}), 502
+    if response.status_code == 403:
+        return jsonify({"error": "GitHub API rate limit reached. Please try again later."}), 429
+    if response.status_code != 200:
+        return jsonify({"error": "Could not search GitHub users."}), 502
+
+    data = response.json()
+    return jsonify({"users": [
+        {"username": user["login"], "avatar": user["avatar_url"], "profile_url": user["html_url"]}
+        for user in data.get("items", [])
+    ]})
 
 
 @app.route("/api/github/<username>")
 def github_profile(username):
     response, error = github_get(f"users/{username}")
-
     if error:
         return jsonify({"error": error}), 502
-
     if response.status_code == 404:
         return jsonify({"error": "GitHub user not found."}), 404
-
     if response.status_code == 403:
-        return jsonify({
-            "error": "GitHub API rate limit reached. Please try again later."
-        }), 429
-
+        return jsonify({"error": "GitHub API rate limit reached. Please try again later."}), 429
     if response.status_code != 200:
         return jsonify({"error": "GitHub could not return this profile."}), 502
 
     data = response.json()
-
     return jsonify({
         "username": data.get("login"),
         "name": data.get("name"),
@@ -73,60 +239,42 @@ def github_profile(username):
         "followers": data.get("followers", 0),
         "following": data.get("following", 0),
         "avatar": data.get("avatar_url"),
-        "profile_url": data.get("html_url")
+        "profile_url": data.get("html_url"),
     })
 
 
 @app.route("/api/github/<username>/repos")
 def github_repositories(username):
     result = []
-    total_stars = 0
-    total_forks = 0
-    total_size = 0
+    total_stars = total_forks = total_size = 0
     languages = {}
     page = 1
 
     while True:
         response, error = github_get(
             f"users/{username}/repos",
-            {
-                "per_page": 100,
-                "page": page,
-                "sort": "updated",
-                "type": "owner"
-            }
+            {"per_page": 100, "page": page, "sort": "updated", "type": "owner"},
         )
-
         if error:
             return jsonify({"error": error}), 502
-
         if response.status_code == 404:
             return jsonify({"error": "GitHub user not found."}), 404
-
         if response.status_code == 403:
-            return jsonify({
-                "error": "GitHub API rate limit reached. Please try again later."
-            }), 429
-
+            return jsonify({"error": "GitHub API rate limit reached. Please try again later."}), 429
         if response.status_code != 200:
             return jsonify({"error": "Could not fetch repositories."}), 502
 
         repos = response.json()
-
         for repo in repos:
             language = repo.get("language")
-
             if language:
                 languages[language] = languages.get(language, 0) + 1
-
             stars = repo.get("stargazers_count", 0)
             forks = repo.get("forks_count", 0)
             size = repo.get("size", 0)
-
             total_stars += stars
             total_forks += forks
             total_size += size
-
             result.append({
                 "name": repo.get("name"),
                 "description": repo.get("description"),
@@ -135,12 +283,10 @@ def github_repositories(username):
                 "forks": forks,
                 "size": size,
                 "updated_at": repo.get("updated_at"),
-                "url": repo.get("html_url")
+                "url": repo.get("html_url"),
             })
-
         if len(repos) < 100:
             break
-
         page += 1
 
     return jsonify({
@@ -150,18 +296,168 @@ def github_repositories(username):
             "total_stars": total_stars,
             "total_forks": total_forks,
             "total_size": total_size,
-            "languages": languages
-        }
+            "languages": languages,
+        },
     })
+
+
+@app.route("/register", methods=["GET", "POST"])
+@limiter.limit("10 per minute", methods=["POST"])
+def register():
+    if current_user.is_authenticated:
+        return redirect(url_for("home"))
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        if not name or not email or not password:
+            flash("Please fill in every field.", "error")
+            return render_template("register.html")
+        if len(password) < 8:
+            flash("Password must be at least 8 characters.", "error")
+            return render_template("register.html")
+        try:
+            with get_db() as db:
+                db.execute(
+                    "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
+                    (name, email, generate_password_hash(password)),
+                )
+        except sqlite3.IntegrityError:
+            flash("An account with this email already exists.", "error")
+            return render_template("register.html")
+        flash("Account created! Please log in.", "success")
+        return redirect(url_for("login"))
+    return render_template("register.html")
+
+
+@app.route("/login", methods=["GET", "POST"])
+@limiter.limit("10 per minute", methods=["POST"])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for("home"))
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        with get_db() as db:
+            row = db.execute(
+                "SELECT id, name, email, password_hash FROM users WHERE email = ?", (email,)
+            ).fetchone()
+        if row and check_password_hash(row["password_hash"], password):
+            login_user(User(row["id"], row["name"], row["email"]))
+            return redirect(url_for("account"))
+        flash("Invalid email or password.", "error")
+    return render_template("login.html")
+
+
+@app.route("/forgot-password", methods=["GET", "POST"])
+@limiter.limit("3 per hour", methods=["POST"])
+def forgot_password():
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        # Always return the same response so the endpoint does not reveal registered emails.
+        generic_message = "If an account exists for that email, a reset link will be sent shortly."
+        if email and len(email) <= 320:
+            with get_db() as db:
+                user = db.execute("SELECT id, email FROM users WHERE email = ?", (email,)).fetchone()
+                if user:
+                    raw_token = secrets.token_urlsafe(32)
+                    token_hash = hash_reset_token(raw_token)
+                    now = int(time.time())
+                    db.execute("UPDATE password_reset_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL", (now, user["id"]))
+                    db.execute(
+                        """INSERT INTO password_reset_tokens
+                           (user_id, token_hash, expires_at, used_at, created_at)
+                           VALUES (?, ?, ?, NULL, ?)""",
+                        (user["id"], token_hash, now + RESET_TOKEN_SECONDS, now),
+                    )
+                    reset_url = f"{app.config['PUBLIC_BASE_URL']}{url_for('reset_password', token=raw_token)}"
+                    try:
+                        send_reset_email(user["email"], reset_url)
+                    except Exception as error:
+                        print("EMAIL ERROR:", repr(error))
+                        app.logger.exception("Password reset email could not be sent")
+        flash(generic_message, "success")
+        return redirect(url_for("forgot_password"))
+    return render_template("forgot_password.html")
+
+
+@app.route("/reset-password/<token>", methods=["GET", "POST"])
+@limiter.limit("10 per minute")
+def reset_password(token):
+    record = get_valid_reset_record(token)
+    if record is None:
+        flash("This password-reset link is invalid, expired, or already used.", "error")
+        return redirect(url_for("forgot_password"))
+
+    if request.method == "POST":
+        password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
+        if len(password) < 8:
+            flash("Password must be at least 8 characters.", "error")
+            return render_template("reset_password.html", token=token)
+        if password != confirm_password:
+            flash("Passwords do not match.", "error")
+            return render_template("reset_password.html", token=token)
+
+        now = int(time.time())
+        with get_db() as db:
+            # Recheck within the transaction to prevent reuse of a consumed token.
+            current_record = db.execute(
+                """SELECT id, user_id FROM password_reset_tokens
+                   WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?""",
+                (hash_reset_token(token), now),
+            ).fetchone()
+            if current_record is None:
+                flash("This password-reset link is invalid, expired, or already used.", "error")
+                return redirect(url_for("forgot_password"))
+            db.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (generate_password_hash(password), current_record["user_id"]),
+            )
+            # Mark all outstanding reset links for this account as used.
+            db.execute(
+                "UPDATE password_reset_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL",
+                (now, current_record["user_id"]),
+            )
+        flash("Password reset successful. Please log in with your new password.", "success")
+        return redirect(url_for("login"))
+
+    return render_template("reset_password.html", token=token)
+
+
+@app.route("/account")
+@login_required
+def account():
+    return render_template("account.html", user=current_user)
+
+
+@app.route("/logout", methods=["POST"])
+@login_required
+def logout():
+    logout_user()
+    flash("You have logged out.", "success")
+    return redirect(url_for("login"))
+
+
+@app.route("/test-email")
+@login_required
+def test_email():
+    try:
+        message = Message(
+            subject="GitHub Analytics - Email Test",
+            recipients=[current_user.email],
+            body="Bro, your Flask email system is working!"
+        )
+        mail.send(message)
+        return "SUCCESS: Email sent. Check your inbox and spam folder."
+    except Exception as error:
+        app.logger.exception("EMAIL TEST FAILED")
+        return f"EMAIL TEST FAILED: {type(error).__name__}. Check the terminal."
 
 
 if __name__ == "__main__":
     print("Dashboard file:", os.path.abspath(__file__))
     print("Static folder:", app.static_folder)
-    print("CSS exists:", os.path.isfile(
-        os.path.join(app.static_folder, "style.css")
-    ))
-    print("JavaScript exists:", os.path.isfile(
-        os.path.join(app.static_folder, "js", "script.js")
-    ))
+    print("CSS exists:", os.path.isfile(os.path.join(app.static_folder, "style.css")))
+    print("JavaScript exists:", os.path.isfile(os.path.join(app.static_folder, "js", "script.js")))
     app.run(debug=True)

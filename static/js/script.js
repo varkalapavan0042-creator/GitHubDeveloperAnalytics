@@ -8,6 +8,10 @@ const statusMessage = document.getElementById("statusMessage");
 const repositoriesContainer = document.getElementById("repositories");
 const languageLegend = document.getElementById("languageLegend");
 
+const suggestionsBox = document.getElementById("suggestionsBox");
+
+let suggestionTimer = null;
+let suggestionRequest = 0;
 let languageChart = null;
 let requestNumber = 0;
 
@@ -292,6 +296,129 @@ async function analyzeUser(username) {
     }
 }
 
+function hideSuggestions() {
+    suggestionsBox.hidden = true;
+    suggestionsBox.replaceChildren();
+}
+
+function showSuggestionMessage(message) {
+    suggestionsBox.replaceChildren();
+
+    const item = createTextElement(
+        "div",
+        "suggestion-message",
+        message
+    );
+
+    suggestionsBox.appendChild(item);
+    suggestionsBox.hidden = false;
+}
+
+function renderSuggestions(users) {
+    suggestionsBox.replaceChildren();
+
+    if (!users.length) {
+        showSuggestionMessage("No matching users found.");
+        return;
+    }
+
+    users.forEach(user => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "suggestion-item";
+        button.setAttribute("role", "option");
+
+        const avatar = document.createElement("img");
+        avatar.src = user.avatar;
+        avatar.alt = "";
+        avatar.loading = "lazy";
+
+        const details = document.createElement("span");
+        details.className = "suggestion-details";
+
+        const username = createTextElement(
+            "strong",
+            "",
+            user.username
+        );
+
+        const label = createTextElement(
+            "small",
+            "",
+            "GitHub user"
+        );
+
+        details.append(username, label);
+        button.append(avatar, details);
+
+        button.addEventListener("click", () => {
+            usernameInput.value = user.username;
+            hideSuggestions();
+            analyzeUser(user.username);
+        });
+
+        suggestionsBox.appendChild(button);
+    });
+
+    suggestionsBox.hidden = false;
+}
+
+usernameInput.addEventListener("input", () => {
+    clearTimeout(suggestionTimer);
+
+    const query = usernameInput.value.trim();
+    const currentRequest = ++suggestionRequest;
+
+    if (query.length < 3) {
+        hideSuggestions();
+        return;
+    }
+
+    suggestionTimer = setTimeout(async () => {
+        showSuggestionMessage("Searching GitHub...");
+
+        try {
+            const response = await fetch(
+                `/api/github-search?q=${encodeURIComponent(query)}`
+            );
+
+            const data = await response.json();
+
+            if (currentRequest !== suggestionRequest) return;
+
+            if (!response.ok) {
+                showSuggestionMessage(
+                    data.error || "GitHub search is unavailable."
+                );
+                return;
+            }
+
+            renderSuggestions(data.users || []);
+        } catch {
+            if (currentRequest !== suggestionRequest) return;
+
+            showSuggestionMessage(
+                "Could not connect to GitHub. Try again."
+            );
+        }
+    }, 350);
+});
+
+usernameInput.addEventListener("keydown", event => {
+    if (event.key === "Escape") {
+        hideSuggestions();
+    }
+});
+
+document.addEventListener("click", event => {
+    if (
+        !suggestionsBox.contains(event.target) &&
+        event.target !== usernameInput
+    ) {
+        hideSuggestions();
+    }
+});
+
 form.addEventListener("submit", event => {
     event.preventDefault();
 
@@ -303,6 +430,7 @@ form.addEventListener("submit", event => {
         return;
     }
 
+    hideSuggestions();
     analyzeUser(username);
 });
 

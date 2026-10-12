@@ -1,0 +1,195 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>Login | DevAnalytics</title>
+
+    <link rel="stylesheet"
+          href="{{ url_for('static', filename='style.css') }}">
+
+    <style>
+        .auth-container {
+            width: min(430px, 90%);
+            margin: 65px auto;
+        }
+
+        .auth-card {
+            padding: 32px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: linear-gradient(145deg, #141f33, #101828);
+            box-shadow: 0 20px 55px #0004;
+        }
+
+        .auth-card h1 {
+            margin: 8px 0;
+            font-size: 2rem;
+            text-align: center;
+        }
+
+        .auth-description {
+            margin-bottom: 25px;
+            color: var(--muted);
+            text-align: center;
+            font-size: 0.9rem;
+        }
+
+        .auth-form {
+            display: grid;
+            gap: 16px;
+        }
+
+        .auth-form input {
+            width: 100%;
+            padding: 13px 14px;
+            color: var(--text);
+            background: #0b1425;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            outline: none;
+        }
+
+        .auth-form input:focus {
+            border-color: var(--blue);
+            box-shadow: 0 0 0 3px #70a7ff16;
+        }
+
+        .auth-form button {
+            width: 100%;
+            padding: 13px;
+            border: 0;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #4b8af5, #765bea);
+            color: white;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .auth-form button:hover {
+            opacity: 0.9;
+        }
+
+        .auth-link {
+            text-align: center;
+            font-size: 0.9rem;
+        }
+
+        .auth-links {
+            display: grid;
+            gap: 13px;
+            margin-top: 22px;
+        }
+
+        .auth-message {
+            margin-bottom: 15px;
+            padding: 10px 12px;
+            border-radius: 9px;
+            overflow-wrap: anywhere;
+            font-size: 0.9rem;
+        }
+
+        .auth-message.error {
+            color: #ffaaaa;
+            background: #351c28;
+            border: 1px solid #743548;
+        }
+
+        .auth-message.success {
+            color: var(--green);
+            background: #103025;
+            border: 1px solid #285c48;
+        }
+
+        @media (max-width: 480px) {
+            .auth-container {
+                margin: 35px auto;
+            }
+
+            .auth-card {
+                padding: 23px 19px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <header class="topbar">
+        <a class="brand" href="{{ url_for('home') }}">
+            <span class="brand-icon">DA</span>
+            <span>Dev<span class="accent">Analytics</span></span>
+        </a>
+
+        <span class="live-label">
+            <span class="live-dot"></span>
+            Developer Dashboard
+        </span>
+    </header>
+
+    <main class="auth-container">
+        <section class="auth-card">
+            <p class="eyebrow">WELCOME BACK</p>
+            <h1>Log in to your account</h1>
+            <p class="auth-description">
+                Access your GitHub developer analytics.
+            </p>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% for category, message in messages %}
+                    <p class="auth-message {{ category }}">
+                        {{ message }}
+                    </p>
+                {% endfor %}
+            {% endwith %}
+
+            <form class="auth-form" method="POST">
+                <input type="hidden"
+                       name="csrf_token"
+                       value="{{ csrf_token() }}">
+
+                <input
+                    name="email"
+                    type="email"
+                    placeholder="Email address"
+                    autocomplete="email"
+                    required
+                >
+
+                <input
+                    name="password"
+                    type="password"
+                    placeholder="Password"
+                    autocomplete="current-password"
+                    required
+                >
+
+                <p class="auth-link">
+                    <a href="{{ url_for('forgot_password') }}">
+                        Forgot password?
+                    </a>
+                </p>
+
+                <button type="submit">Log In</button>
+            </form>
+
+            <div class="auth-links">
+                <p class="auth-link">
+                    New here?
+                    <a href="{{ url_for('register') }}">Create an account</a>
+                </p>
+
+                <p class="auth-link">
+                    <a href="{{ url_for('home') }}">← Back to dashboard</a>
+                </p>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <span>DevAnalytics</span>
+        <span>GitHub Developer Analytics Dashboard</span>
+    </footer>
+</body>
+</html>

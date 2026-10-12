@@ -14,12 +14,40 @@
 </head>
 <body>
     <header class="topbar">
-        <a class="brand" href="/">
-            <span class="brand-icon">GH</span>
-            <span>Dev<span class="accent">Analytics</span></span>
-        </a>
-        <span class="live-label"><span class="live-dot"></span> GitHub API</span>
-    </header>
+    <a class="brand" href="{{ url_for('home') }}">
+        <span class="brand-icon">GH</span>
+        <span>Dev<span class="accent">Analytics</span></span>
+    </a>
+
+    <div class="nav-right">
+        {% if current_user.is_authenticated %}
+            <a class="nav-button" href="{{ url_for('account') }}">
+                My Account
+            </a>
+
+            <form class="nav-logout"
+                  method="POST"
+                  action="{{ url_for('logout') }}">
+                <button class="nav-button nav-logout-button" type="submit">
+                    Log Out
+                </button>
+            </form>
+        {% else %}
+            <a class="nav-button" href="{{ url_for('login') }}">
+                Log In
+            </a>
+
+            <a class="nav-button nav-register"
+               href="{{ url_for('register') }}">
+                Register
+            </a>
+        {% endif %}
+
+        <span class="live-label">
+            <span class="live-dot"></span> GitHub API
+        </span>
+    </div>
+</header>
 
     <main class="container">
         <section class="hero">
@@ -41,6 +69,12 @@
                     required
                 >
                 <button id="analyzeBtn" type="submit">Analyze profile ↗</button>
+
+                <div id="suggestionsBox"
+                    class="suggestions-box"
+                    role="listbox"
+                    hidden>
+                </div>
             </form>
             <p class="search-hint">Enter any public GitHub username to get started.</p>
         </section>
