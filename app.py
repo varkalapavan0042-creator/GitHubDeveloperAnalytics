@@ -265,18 +265,44 @@ def get_valid_reset_record(token):
         ).fetchone()
 
 
+
 def send_reset_email(email, reset_url):
-    message = Message(
-        subject="Reset your GitHub Developer Analytics password",
-        recipients=[email],
-        body=(
+    api_key = os.getenv("RESEND_API_KEY")
+    sender = os.getenv("MAIL_DEFAULT_SENDER")
+
+    if not api_key:
+        raise RuntimeError("RESEND_API_KEY is missing.")
+
+    if not sender:
+        raise RuntimeError("MAIL_DEFAULT_SENDER is missing.")
+
+    payload = {
+        "from": sender,
+        "to": [email],
+        "subject": "Reset your GitHub Developer Analytics password",
+        "text": (
             "You requested a password reset.\n\n"
-            f"Click this link within 15 minutes:\n{reset_url}\n\n"
+            "Click this link within 15 minutes:\n"
+            f"{reset_url}\n\n"
             "If you did not request this, ignore this email."
         ),
+    }
+
+    response = requests.post(
+        "https://api.resend.com/emails",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=(5, 15),
     )
 
-    mail.send(message)
+    if not response.ok:
+        raise RuntimeError(
+            f"Email API returned HTTP {response.status_code}: "
+            f"{response.text[:500]}"
+        )
 
 
 # Create tables when the application starts.
