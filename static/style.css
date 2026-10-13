@@ -811,3 +811,82 @@ footer span {
         font-size: 11px;
     }
 }
+
+
+/* Account page */
+.account-card {
+    max-width: 650px;
+    margin: 30px auto;
+    padding: 30px;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 16px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+}
+
+.account-card h2 {
+    margin-top: 0;
+    color: #f8fafc;
+}
+
+.account-card p {
+    color: #cbd5e1;
+    overflow-wrap: anywhere;
+}
+
+.account-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin-top: 24px;
+}
+
+.account-actions form {
+    margin: 0;
+}
+
+.account-actions .button {
+    display: inline-block;
+    padding: 11px 18px;
+    border: 0;
+    border-radius: 8px;
+    background: #2563eb;
+    color: #ffffff;
+    font: inherit;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.account-actions .button:hover {
+    background: #1d4ed8;
+}
+
+.account-actions .logout-button {
+    background: #dc2626;
+}
+
+.account-actions .logout-button:hover {
+    background: #b91c1c;
+}
+
+@media (max-width: 600px) {
+    .account-card {
+        padding: 20px;
+    }
+
+    .account-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .account-actions .button {
+        box-sizing: border-box;
+        width: 100%;
+        text-align: center;
+    }
+
+    .account-actions form {
+        width: 100%;
+    }
+}
