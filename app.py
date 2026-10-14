@@ -216,22 +216,31 @@ def load_user(user_id):
 # GITHUB API HELPERS
 # --------------------------------------------------
 
+
 def github_get(path, params=None):
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+    token = os.getenv("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
     try:
         response = requests.get(
             f"{GITHUB_API}/{path}",
             params=params,
-            headers={
-                "Accept": "application/vnd.github+json"
-            },
+            headers=headers,
             timeout=15,
         )
         return response, None
 
     except requests.RequestException:
+        app.logger.exception("GitHub API request failed")
         return (
             None,
-            "Could not connect to GitHub. Check your internet connection.",
+            "Could not connect to GitHub. Please try again later.",
         )
 
 
@@ -266,43 +275,26 @@ def get_valid_reset_record(token):
 
 
 
+
 def send_reset_email(email, reset_url):
-    api_key = os.getenv("RESEND_API_KEY")
-    sender = os.getenv("MAIL_DEFAULT_SENDER")
+    if not app.config["MAIL_USERNAME"]:
+        raise RuntimeError("MAIL_USERNAME is missing.")
 
-    if not api_key:
-        raise RuntimeError("RESEND_API_KEY is missing.")
+    if not app.config["MAIL_PASSWORD"]:
+        raise RuntimeError("MAIL_PASSWORD is missing.")
 
-    if not sender:
-        raise RuntimeError("MAIL_DEFAULT_SENDER is missing.")
-
-    payload = {
-        "from": sender,
-        "to": [email],
-        "subject": "Reset your GitHub Developer Analytics password",
-        "text": (
+    message = Message(
+        subject="Reset your GitHub Developer Analytics password",
+        recipients=[email],
+        body=(
             "You requested a password reset.\n\n"
             "Click this link within 15 minutes:\n"
             f"{reset_url}\n\n"
             "If you did not request this, ignore this email."
         ),
-    }
-
-    response = requests.post(
-        "https://api.resend.com/emails",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json=payload,
-        timeout=(5, 15),
     )
 
-    if not response.ok:
-        raise RuntimeError(
-            f"Email API returned HTTP {response.status_code}: "
-            f"{response.text[:500]}"
-        )
+    mail.send(message)
 
 
 # Create tables when the application starts.
