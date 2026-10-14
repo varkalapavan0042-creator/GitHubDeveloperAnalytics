@@ -25,13 +25,19 @@
                 My Account
             </a>
 
-            <form class="nav-logout"
-                  method="POST"
-                  action="{{ url_for('logout') }}">
-                <button class="nav-button nav-logout-button" type="submit">
-                    Log Out
-                </button>
-            </form>
+            
+                <form class="nav-logout"
+                        method="POST"
+                    action="{{ url_for('logout') }}">
+                    <input type="hidden"
+                        name="csrf_token"
+                            value="{{ csrf_token() }}">
+
+                    <button class="nav-button nav-logout-button" type="submit">
+                        Log Out
+                    </button>
+                </form>
+
         {% else %}
             <a class="nav-button" href="{{ url_for('login') }}">
                 Log In
