@@ -1,4 +1,3 @@
-
 import os
 import time
 import secrets
@@ -9,7 +8,6 @@ import requests
 
 from psycopg.rows import dict_row
 from psycopg import IntegrityError
-
 from dotenv import load_dotenv
 
 from flask import (
@@ -21,7 +19,6 @@ from flask import (
     url_for,
     flash,
 )
-
 from flask_login import (
     LoginManager,
     UserMixin,
@@ -30,7 +27,6 @@ from flask_login import (
     login_required,
     current_user,
 )
-
 from flask_mail import Mail, Message
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -53,53 +49,50 @@ app = Flask(
 )
 
 secret_key = os.getenv("SECRET_KEY")
-
 if not secret_key:
-    raise RuntimeError(
-        "SECRET_KEY is missing. Add it to your .env file."
-    )
+    raise RuntimeError("SECRET_KEY is missing from environment variables.")
 
 app.config["SECRET_KEY"] = secret_key
 
-app.config["PUBLIC_BASE_URL"] = os.getenv(
-    "PUBLIC_BASE_URL",
-    "http://127.0.0.1:5000",
-).rstrip("/")
+# Set PUBLIC_BASE_URL in Render to:
+# https://githubdeveloperanalytics.onrender.com
+public_base_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+if not public_base_url:
+    if os.getenv("RENDER"):
+        raise RuntimeError(
+            "PUBLIC_BASE_URL is missing. Set it to your deployed HTTPS URL in Render."
+        )
+    public_base_url = "http://127.0.0.1:5000"
 
-app.config["MAIL_SERVER"] = os.getenv(
-    "MAIL_SERVER", "smtp.gmail.com"
+if os.getenv("RENDER") and not public_base_url.startswith("https://"):
+    raise RuntimeError("PUBLIC_BASE_URL must use HTTPS in production.")
+
+app.config["PUBLIC_BASE_URL"] = public_base_url
+
+# Gmail SMTP. Use a Google App Password, not your normal Gmail password.
+app.config["MAIL_SERVER"] = os.getenv("MAIL_SERVER", "smtp.gmail.com")
+app.config["MAIL_PORT"] = int(os.getenv("MAIL_PORT", "587"))
+app.config["MAIL_USE_TLS"] = os.getenv("MAIL_USE_TLS", "True").lower() in (
+    "1", "true", "yes"
 )
-app.config["MAIL_PORT"] = int(
-    os.getenv("MAIL_PORT", "587")
-)
-app.config["MAIL_USE_TLS"] = os.getenv(
-    "MAIL_USE_TLS", "True"
-).lower() in ("1", "true", "yes")
-app.config["MAIL_USERNAME"] = os.getenv(
-    "MAIL_USERNAME", ""
-)
-app.config["MAIL_PASSWORD"] = os.getenv(
-    "MAIL_PASSWORD", ""
-)
+app.config["MAIL_USE_SSL"] = False
+app.config["MAIL_USERNAME"] = os.getenv("MAIL_USERNAME", "")
+app.config["MAIL_PASSWORD"] = os.getenv("MAIL_PASSWORD", "")
 app.config["MAIL_DEFAULT_SENDER"] = os.getenv(
     "MAIL_DEFAULT_SENDER",
     app.config["MAIL_USERNAME"],
 )
 
-if app.config["PUBLIC_BASE_URL"].startswith("https://"):
-    app.config.update(
-        SESSION_COOKIE_SECURE=True,
-        SESSION_COOKIE_HTTPONLY=True,
-        SESSION_COOKIE_SAMESITE="Lax",
-    )
-else:
-    app.config.update(
-        SESSION_COOKIE_HTTPONLY=True,
-        SESSION_COOKIE_SAMESITE="Lax",
-    )
+is_production = bool(os.getenv("RENDER")) or os.getenv("FLASK_ENV") == "production"
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=public_base_url.startswith("https://"),
+    REMEMBER_COOKIE_HTTPONLY=True,
+    REMEMBER_COOKIE_SECURE=public_base_url.startswith("https://"),
+)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-
 GITHUB_API = "https://api.github.com"
 RESET_TOKEN_SECONDS = 15 * 60
 
@@ -109,16 +102,12 @@ RESET_TOKEN_SECONDS = 15 * 60
 # --------------------------------------------------
 
 mail = Mail(app)
-
 csrf = CSRFProtect(app)
 
 limiter = Limiter(
     get_remote_address,
     app=app,
-    storage_uri=os.getenv(
-        "RATELIMIT_STORAGE_URI",
-        "memory://",
-    ),
+    storage_uri=os.getenv("RATELIMIT_STORAGE_URI", "memory://"),
 )
 
 login_manager = LoginManager()
@@ -134,9 +123,7 @@ login_manager.login_message_category = "error"
 
 def get_db():
     if not DATABASE_URL:
-        raise RuntimeError(
-            "DATABASE_URL is missing from environment variables."
-        )
+        raise RuntimeError("DATABASE_URL is missing from environment variables.")
 
     return psycopg.connect(
         DATABASE_URL,
@@ -205,22 +192,18 @@ def load_user(user_id):
     if row is None:
         return None
 
-    return User(
-        row["id"],
-        row["name"],
-        row["email"],
-    )
+    return User(row["id"], row["name"], row["email"])
 
 
 # --------------------------------------------------
 # GITHUB API HELPERS
 # --------------------------------------------------
 
-
 def github_get(path, params=None):
     headers = {
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "GitHub-Developer-Analytics",
     }
 
     token = os.getenv("GITHUB_TOKEN")
@@ -229,19 +212,15 @@ def github_get(path, params=None):
 
     try:
         response = requests.get(
-            f"{GITHUB_API}/{path}",
+            f"{GITHUB_API}/{path.lstrip('/')}",
             params=params,
             headers=headers,
             timeout=15,
         )
         return response, None
-
     except requests.RequestException:
         app.logger.exception("GitHub API request failed")
-        return (
-            None,
-            "Could not connect to GitHub. Please try again later.",
-        )
+        return None, "Could not connect to GitHub. Please try again later."
 
 
 # --------------------------------------------------
@@ -249,9 +228,7 @@ def github_get(path, params=None):
 # --------------------------------------------------
 
 def hash_reset_token(token):
-    return hashlib.sha256(
-        token.encode("utf-8")
-    ).hexdigest()
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def get_valid_reset_record(token):
@@ -267,53 +244,32 @@ def get_valid_reset_record(token):
               AND used_at IS NULL
               AND expires_at > %s
             """,
-            (
-                hash_reset_token(token),
-                int(time.time()),
-            ),
+            (hash_reset_token(token), int(time.time())),
         ).fetchone()
 
 
-
-
-
-
 def send_reset_email(email, reset_url):
-    api_key = os.getenv("RESEND_API_KEY")
-    sender = os.getenv("MAIL_DEFAULT_SENDER")
+    """Send a password-reset email using the configured Gmail SMTP account."""
+    if not app.config["MAIL_USERNAME"]:
+        raise RuntimeError("MAIL_USERNAME is missing from environment variables.")
+    if not app.config["MAIL_PASSWORD"]:
+        raise RuntimeError("MAIL_PASSWORD is missing from environment variables.")
+    if not app.config["MAIL_DEFAULT_SENDER"]:
+        raise RuntimeError("MAIL_DEFAULT_SENDER is missing from environment variables.")
 
-    if not api_key:
-        raise RuntimeError("RESEND_API_KEY is missing.")
-
-    if not sender:
-        raise RuntimeError("MAIL_DEFAULT_SENDER is missing.")
-
-    response = requests.post(
-        "https://api.resend.com/emails",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "from": sender,
-            "to": [email],
-            "subject": "Reset your GitHub Developer Analytics password",
-            "text": (
-                "You requested a password reset.\n\n"
-                "Click this link within 15 minutes:\n"
-                f"{reset_url}\n\n"
-                "If you did not request this, ignore this email."
-            ),
-        },
-        timeout=15,
+    message = Message(
+        subject="Reset your GitHub Developer Analytics password",
+        recipients=[email],
+        sender=app.config["MAIL_DEFAULT_SENDER"],
+        body=(
+            "You requested a password reset for GitHub Developer Analytics.\n\n"
+            "Use the link below within 15 minutes to choose a new password:\n\n"
+            f"{reset_url}\n\n"
+            "This link can only be used once. If you did not request this, "
+            "you can ignore this email."
+        ),
     )
-
-    if not response.ok:
-        raise RuntimeError(
-            f"Resend API error: {response.status_code} "
-            f"{response.text[:500]}"
-        )
-
+    mail.send(message)
 
 
 # Create tables when the application starts.
@@ -328,7 +284,6 @@ init_db()
 def home():
     if current_user.is_authenticated:
         return render_template("index.html")
-
     return redirect(url_for("welcome"))
 
 
@@ -336,19 +291,13 @@ def home():
 def welcome():
     if current_user.is_authenticated:
         return redirect(url_for("home"))
-
     return render_template("welcome.html")
 
 
 @app.route("/check-static")
 def check_static():
-    css_path = os.path.join(
-        BASE_DIR, "static", "style.css"
-    )
-    js_path = os.path.join(
-        BASE_DIR, "static", "js", "script.js"
-    )
-
+    css_path = os.path.join(BASE_DIR, "static", "style.css")
+    js_path = os.path.join(BASE_DIR, "static", "js", "script.js")
     return {
         "app_file": os.path.abspath(__file__),
         "static_folder": app.static_folder,
@@ -363,35 +312,32 @@ def check_static():
 # --------------------------------------------------
 
 @app.route("/api/github-search")
+@limiter.limit("30 per minute")
 def github_user_search():
     query = request.args.get("q", "").strip()
-
     if len(query) < 3:
         return jsonify({"users": []})
 
     response, error = github_get(
         "search/users",
-        {
-            "q": f"{query} in:login",
-            "per_page": 7,
-        },
+        {"q": f"{query} in:login", "per_page": 7},
     )
 
     if error:
         return jsonify({"error": error}), 502
 
     if response.status_code == 403:
-        return jsonify({
-            "error": "GitHub API rate limit reached. Please try again later."
-        }), 429
+        remaining = response.headers.get("X-RateLimit-Remaining")
+        if remaining == "0" or "rate limit" in response.text.lower():
+            return jsonify({
+                "error": "GitHub API rate limit reached. Please try again later."
+            }), 429
+        return jsonify({"error": "GitHub denied this search request."}), 502
 
     if response.status_code != 200:
-        return jsonify({
-            "error": "Could not search GitHub users."
-        }), 502
+        return jsonify({"error": "Could not search GitHub users."}), 502
 
     data = response.json()
-
     return jsonify({
         "users": [
             {
@@ -409,31 +355,26 @@ def github_user_search():
 # --------------------------------------------------
 
 @app.route("/api/github/<username>")
+@limiter.limit("60 per minute")
 def github_profile(username):
-    response, error = github_get(
-        f"users/{username}"
-    )
+    response, error = github_get(f"users/{username}")
 
     if error:
         return jsonify({"error": error}), 502
-
     if response.status_code == 404:
-        return jsonify({
-            "error": "GitHub user not found."
-        }), 404
-
+        return jsonify({"error": "GitHub user not found."}), 404
     if response.status_code == 403:
-        return jsonify({
-            "error": "GitHub API rate limit reached. Please try again later."
-        }), 429
-
+        if response.headers.get("X-RateLimit-Remaining") == "0" or (
+            "rate limit" in response.text.lower()
+        ):
+            return jsonify({
+                "error": "GitHub API rate limit reached. Please try again later."
+            }), 429
+        return jsonify({"error": "GitHub denied this profile request."}), 502
     if response.status_code != 200:
-        return jsonify({
-            "error": "GitHub could not return this profile."
-        }), 502
+        return jsonify({"error": "GitHub could not return this profile."}), 502
 
     data = response.json()
-
     return jsonify({
         "username": data.get("login"),
         "name": data.get("name"),
@@ -451,15 +392,17 @@ def github_profile(username):
 # --------------------------------------------------
 
 @app.route("/api/github/<username>/repos")
+@limiter.limit("20 per minute")
 def github_repositories(username):
     result = []
     total_stars = 0
     total_forks = 0
     total_size = 0
     languages = {}
-    page = 1
+    # Limit to 10 pages / 1,000 repositories per request to avoid unbounded API calls.
+    max_pages = 10
 
-    while True:
+    for page in range(1, max_pages + 1):
         response, error = github_get(
             f"users/{username}/repos",
             {
@@ -472,36 +415,28 @@ def github_repositories(username):
 
         if error:
             return jsonify({"error": error}), 502
-
         if response.status_code == 404:
-            return jsonify({
-                "error": "GitHub user not found."
-            }), 404
-
+            return jsonify({"error": "GitHub user not found."}), 404
         if response.status_code == 403:
-            return jsonify({
-                "error": "GitHub API rate limit reached. Please try again later."
-            }), 429
-
+            if response.headers.get("X-RateLimit-Remaining") == "0" or (
+                "rate limit" in response.text.lower()
+            ):
+                return jsonify({
+                    "error": "GitHub API rate limit reached. Please try again later."
+                }), 429
+            return jsonify({"error": "GitHub denied this repository request."}), 502
         if response.status_code != 200:
-            return jsonify({
-                "error": "Could not fetch repositories."
-            }), 502
+            return jsonify({"error": "Could not fetch repositories."}), 502
 
         repos = response.json()
-
         for repo in repos:
             language = repo.get("language")
-
             if language:
-                languages[language] = (
-                    languages.get(language, 0) + 1
-                )
+                languages[language] = languages.get(language, 0) + 1
 
             stars = repo.get("stargazers_count", 0)
             forks = repo.get("forks_count", 0)
             size = repo.get("size", 0)
-
             total_stars += stars
             total_forks += forks
             total_size += size
@@ -519,8 +454,6 @@ def github_repositories(username):
 
         if len(repos) < 100:
             break
-
-        page += 1
 
     return jsonify({
         "repositories": result,
@@ -545,58 +478,36 @@ def register():
         return redirect(url_for("home"))
 
     if request.method == "POST":
-        name = request.form.get(
-            "name", ""
-        ).strip()
-
-        email = request.form.get(
-            "email", ""
-        ).strip().lower()
-
-        password = request.form.get(
-            "password", ""
-        )
+        name = request.form.get("name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
 
         if not name or not email or not password:
-            flash(
-                "Please fill in every field.",
-                "error",
-            )
+            flash("Please fill in every field.", "error")
+            return render_template("register.html")
+
+        if len(name) > 200 or len(email) > 320:
+            flash("Name or email is too long.", "error")
             return render_template("register.html")
 
         if len(password) < 8:
-            flash(
-                "Password must be at least 8 characters.",
-                "error",
-            )
+            flash("Password must be at least 8 characters.", "error")
             return render_template("register.html")
 
         try:
             with get_db() as db:
                 db.execute(
                     """
-                    INSERT INTO users
-                        (name, email, password_hash)
+                    INSERT INTO users (name, email, password_hash)
                     VALUES (%s, %s, %s)
                     """,
-                    (
-                        name,
-                        email,
-                        generate_password_hash(password),
-                    ),
+                    (name, email, generate_password_hash(password)),
                 )
-
         except IntegrityError:
-            flash(
-                "An account with this email already exists.",
-                "error",
-            )
+            flash("An account with this email already exists.", "error")
             return render_template("register.html")
 
-        flash(
-            "Account created! Please log in.",
-            "success",
-        )
+        flash("Account created! Please log in.", "success")
         return redirect(url_for("login"))
 
     return render_template("register.html")
@@ -609,18 +520,12 @@ def register():
 @app.route("/login", methods=["GET", "POST"])
 @limiter.limit("10 per minute", methods=["POST"])
 def login():
-    # Already logged in? Don't show the login form.
     if current_user.is_authenticated:
         return redirect(url_for("home"))
 
     if request.method == "POST":
-        email = request.form.get(
-            "email", ""
-        ).strip().lower()
-
-        password = request.form.get(
-            "password", ""
-        )
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
 
         with get_db() as db:
             row = db.execute(
@@ -632,23 +537,11 @@ def login():
                 (email,),
             ).fetchone()
 
-        if row and check_password_hash(
-            row["password_hash"], password
-        ):
-            login_user(
-                User(
-                    row["id"],
-                    row["name"],
-                    row["email"],
-                )
-            )
-
+        if row and check_password_hash(row["password_hash"], password):
+            login_user(User(row["id"], row["name"], row["email"]))
             return redirect(url_for("account"))
 
-        flash(
-            "Invalid email or password.",
-            "error",
-        )
+        flash("Invalid email or password.", "error")
 
     return render_template("login.html")
 
@@ -660,10 +553,7 @@ def login():
 @app.route("/account")
 @login_required
 def account():
-    return render_template(
-        "account.html",
-        user=current_user,
-    )
+    return render_template("account.html", user=current_user)
 
 
 # --------------------------------------------------
@@ -674,12 +564,7 @@ def account():
 @login_required
 def logout():
     logout_user()
-
-    flash(
-        "You have logged out successfully.",
-        "success",
-    )
-
+    flash("You have logged out successfully.", "success")
     return redirect(url_for("login"))
 
 
@@ -691,23 +576,16 @@ def logout():
 @limiter.limit("3 per hour", methods=["POST"])
 def forgot_password():
     if request.method == "POST":
-        email = request.form.get(
-            "email", ""
-        ).strip().lower()
-
+        email = request.form.get("email", "").strip().lower()
         generic_message = (
-            "If an account exists for that email, "
-            "a reset link will be sent shortly."
+            "If an account exists for that email, a reset link will be sent shortly."
         )
 
+        # Keep the public response generic to avoid revealing registered accounts.
         if email and len(email) <= 320:
             with get_db() as db:
                 user = db.execute(
-                    """
-                    SELECT id, email
-                    FROM users
-                    WHERE email = %s
-                    """,
+                    "SELECT id, email FROM users WHERE email = %s",
                     (email,),
                 ).fetchone()
 
@@ -720,8 +598,7 @@ def forgot_password():
                         """
                         UPDATE password_reset_tokens
                         SET used_at = %s
-                        WHERE user_id = %s
-                          AND used_at IS NULL
+                        WHERE user_id = %s AND used_at IS NULL
                         """,
                         (now, user["id"]),
                     )
@@ -729,8 +606,7 @@ def forgot_password():
                     db.execute(
                         """
                         INSERT INTO password_reset_tokens
-                            (user_id, token_hash, expires_at,
-                             used_at, created_at)
+                            (user_id, token_hash, expires_at, used_at, created_at)
                         VALUES (%s, %s, %s, NULL, %s)
                         """,
                         (
@@ -747,14 +623,20 @@ def forgot_password():
                     )
 
                     try:
-                        send_reset_email(
-                            user["email"],
-                            reset_url,
-                        )
+                        send_reset_email(user["email"], reset_url)
                     except Exception:
-                        app.logger.exception(
-                            "Password reset email could not be sent"
-                        )
+                        # Never log the token or full reset URL.
+                        app.logger.exception("Password reset email could not be sent")
+                        # Invalidate this token because delivery failed.
+                        with get_db() as db:
+                            db.execute(
+                                """
+                                UPDATE password_reset_tokens
+                                SET used_at = %s
+                                WHERE token_hash = %s AND used_at IS NULL
+                                """,
+                                (int(time.time()), token_hash),
+                            )
 
         flash(generic_message, "success")
         return redirect(url_for("forgot_password"))
@@ -770,7 +652,6 @@ def forgot_password():
 @limiter.limit("10 per minute")
 def reset_password(token):
     record = get_valid_reset_record(token)
-
     if record is None:
         flash(
             "This password-reset link is invalid, expired, or already used.",
@@ -779,38 +660,22 @@ def reset_password(token):
         return redirect(url_for("forgot_password"))
 
     if request.method == "POST":
-        password = request.form.get(
-            "password", ""
-        )
-
-        confirm_password = request.form.get(
-            "confirm_password", ""
-        )
+        password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
 
         if len(password) < 8:
-            flash(
-                "Password must be at least 8 characters.",
-                "error",
-            )
-            return render_template(
-                "reset_password.html",
-                token=token,
-            )
+            flash("Password must be at least 8 characters.", "error")
+            return render_template("reset_password.html", token=token)
 
         if password != confirm_password:
-            flash(
-                "Passwords do not match.",
-                "error",
-            )
-            return render_template(
-                "reset_password.html",
-                token=token,
-            )
+            flash("Passwords do not match.", "error")
+            return render_template("reset_password.html", token=token)
 
         now = int(time.time())
+        token_hash = hash_reset_token(token)
 
+        # Transaction + row lock prevents concurrent reuse of the same token.
         with get_db() as db:
-            # Lock the token row while checking and consuming it.
             current_record = db.execute(
                 """
                 SELECT id, user_id
@@ -820,10 +685,7 @@ def reset_password(token):
                   AND expires_at > %s
                 FOR UPDATE
                 """,
-                (
-                    hash_reset_token(token),
-                    now,
-                ),
+                (token_hash, now),
             ).fetchone()
 
             if current_record is None:
@@ -831,78 +693,60 @@ def reset_password(token):
                     "This password-reset link is invalid, expired, or already used.",
                     "error",
                 )
-                return redirect(
-                    url_for("forgot_password")
-                )
+                return redirect(url_for("forgot_password"))
 
             db.execute(
-                """
-                UPDATE users
-                SET password_hash = %s
-                WHERE id = %s
-                """,
-                (
-                    generate_password_hash(password),
-                    current_record["user_id"],
-                ),
+                "UPDATE users SET password_hash = %s WHERE id = %s",
+                (generate_password_hash(password), current_record["user_id"]),
             )
-
             db.execute(
                 """
                 UPDATE password_reset_tokens
                 SET used_at = %s
-                WHERE user_id = %s
-                  AND used_at IS NULL
+                WHERE user_id = %s AND used_at IS NULL
                 """,
-                (
-                    now,
-                    current_record["user_id"],
-                ),
+                (now, current_record["user_id"]),
             )
 
         flash(
             "Password reset successful. Please log in with your new password.",
             "success",
         )
-
         return redirect(url_for("login"))
 
-    return render_template(
-        "reset_password.html",
-        token=token,
-    )
+    return render_template("reset_password.html", token=token)
 
 
 # --------------------------------------------------
-# EMAIL TEST
+# EMAIL TEST (LOGIN REQUIRED)
 # --------------------------------------------------
 
-@app.route("/test-email")
+@app.route("/test-email", methods=["POST"])
 @login_required
+@limiter.limit("3 per hour")
 def test_email():
     try:
         message = Message(
             subject="GitHub Analytics - Email Test",
             recipients=[current_user.email],
-            body=(
-                "Your Flask email system is working!"
-            ),
+            body="Your Flask Gmail SMTP configuration is working!",
         )
-
         mail.send(message)
-
-        return (
-            "SUCCESS: Email sent. "
-            "Check your inbox and spam folder."
-        )
-
+        flash("Test email sent. Check your inbox and spam folder.", "success")
     except Exception:
-        app.logger.exception("EMAIL TEST FAILED")
+        app.logger.exception("Test email failed")
+        flash("Test email could not be sent. Check Render logs.", "error")
 
-        return (
-            "EMAIL TEST FAILED. "
-            "Check the application terminal logs."
-        ), 500
+    return redirect(url_for("account"))
+
+
+# --------------------------------------------------
+# ERROR HANDLERS
+# --------------------------------------------------
+
+@app.errorhandler(429)
+def rate_limit_exceeded(_error):
+    return jsonify({"error": "Too many requests. Please try again later."}), 429
 
 
 # --------------------------------------------------
@@ -912,23 +756,16 @@ def test_email():
 if __name__ == "__main__":
     print("Dashboard file:", os.path.abspath(__file__))
     print("Static folder:", app.static_folder)
-
     print(
         "CSS exists:",
-        os.path.isfile(
-            os.path.join(app.static_folder, "style.css")
-        ),
+        os.path.isfile(os.path.join(app.static_folder, "style.css")),
     )
-
     print(
         "JavaScript exists:",
-        os.path.isfile(
-            os.path.join(
-                app.static_folder,
-                "js",
-                "script.js",
-            )
-        ),
+        os.path.isfile(os.path.join(app.static_folder, "js", "script.js")),
     )
-
-    app.run(debug=True)
+    app.run(
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "5000")),
+        debug=not is_production,
+    )
